@@ -1,0 +1,25 @@
+/* Tiny stylesheet for the generated site. */
+body {
+  font-family: Georgia, serif;
+  line-height: 1.6;
+  max-width: 42rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #222;
+}
+nav { margin-bottom: 2rem; }
+pre {
+  background: #f4f4f4;
+  padding: 1rem;
+  overflow-x: auto;
+  border-radius: 4px;
+}
+code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
+pre code { background: none; padding: 0; }
+blockquote {
+  border-left: 4px solid #ccc;
+  margin-left: 0;
+  padding-left: 1rem;
+  color: #555;
+}
+a { color: #0b5fff; }
