@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Template Engine Playground — Build Your Own Web Framework</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0d1c; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#b18cff; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #8a5cff; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:700px; line-height:1.6; }
+  .wrap { width:100%; max-width:980px; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:760px){ .wrap{ grid-template-columns:1fr; } }
+  .card { background:#0e1230; border:1px solid #232c55; border-radius:12px; padding:14px; display:flex; flex-direction:column; }
+  .card h3 { font-size:12px; letter-spacing:2px; color:#8b98b8; margin-bottom:8px; }
+  textarea { width:100%; min-height:260px; background:#070a16; color:#e8f4ff; border:1px solid #232c55;
+    border-radius:8px; padding:12px; font-family:Consolas,monospace; font-size:13.5px; line-height:1.65; resize:vertical; }
+  textarea:focus { outline:none; border-color:#b18cff; }
+  #out { background:#fff; border-radius:8px; min-height:260px; padding:16px; color:#1a1a2e; overflow:auto; }
+  #out h2 { color:#5a3fd4; } #out ul { margin-left:20px; } #out .badge { display:inline-block;
+    background:#ede9ff; color:#5a3fd4; border-radius:12px; padding:2px 10px; font-size:12px; margin:2px; }
+  .tokens { grid-column:1 / -1; }
+  #tok { font-family:Consolas,monospace; font-size:12px; line-height:2; }
+  .t-txt{color:#8b98b8}.t-var{color:#7df9ff;background:#14243a;padding:1px 5px;border-radius:4px}
+  .t-tag{color:#ffd257;background:#2a2113;padding:1px 5px;border-radius:4px}
+  .doc { max-width:980px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#c9b8ff; background:#1a1440; padding:1px 6px; border-radius:4px; font-family:monospace; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .chip { font-size:12px; background:#1a1440; border:1px solid #4a3f8f; color:#c9b8ff; border-radius:14px;
+    padding:4px 12px; cursor:pointer; }
+  .chip:hover { border-color:#b18cff; }
+</style>
+</head>
+<body>
+<h1>TEMPLATE ENGINE PLAYGROUND</h1>
+<p class="sub">The rendering core inside every web framework (Jinja, EJS, Blade, Django templates).
+Type a template + JSON data, watch it <b>compile to tokens</b> and render live.
+This is what "build your own web framework" starts with.</p>
+<div class="wrap">
+  <div class="card">
+    <h3>TEMPLATE</h3>
+    <div class="chips" id="chips"></div>
+    <textarea id="tpl" spellcheck="false"></textarea>
+  </div>
+  <div class="card">
+    <h3>DATA (JSON)</h3>
+    <textarea id="data" spellcheck="false" style="min-height:120px"></textarea>
+    <h3 style="margin-top:10px">RENDERED OUTPUT</h3>
+    <div id="out"></div>
+  </div>
+  <div class="card tokens">
+    <h3>COMPILED TOKENS — what the engine actually sees</h3>
+    <div id="tok"></div>
+  </div>
+</div>
+<div class="doc">
+  <b style="color:#dfe6ff">Syntax:</b> <code>{{ name }}</code> variable ·
+  <code>{% for u in users %}…{% endfor %}</code> loop ·
+  <code>{% if user.admin %}…{% endif %}</code> conditional.
+  <b style="color:#dfe6ff">How it works:</b> the template is lexed into tokens
+  (text / variable / tag), then walked with the data context — variables are looked up
+  (dot paths supported), tags control the walker. ~80 lines below, open devtools → sources.
+  Real engines add escaping, filters, and inheritance on top of exactly this.
+</div>
+
+<script>
+'use strict';
+/* ============ Mini template engine: lex -> render ============ */
+function lex(src) {
+  const toks = [];
+  const re = /({{.*?}}|{%.*?%})/gs;
+  let last = 0, m;
+  while ((m = re.exec(src)) !== null) {
+    if (m.index > last) toks.push({ t: 'text', v: src.slice(last, m.index) });
+    const inner = m[1].slice(2, -2).trim();
+    if (m[1].startsWith('{{')) toks.push({ t: 'var', v: inner });
+    else toks.push({ t: 'tag', v: inner });
+    last = m.index + m[1].length;
+  }
+  if (last < src.length) toks.push({ t: 'text', v: src.slice(last) });
+  return toks;
+}
+function lookup(path, ctx) {
+  return path.split('.').reduce((o, k) => (o == null ? o : o[k]), ctx);
+}
+function render(toks, ctx) {
+  let out = '';
+  for (let i = 0; i < toks.length; i++) {
+    const tk = toks[i];
+    if (tk.t === 'text') out += tk.v;
+    else if (tk.t === 'var') {
+      const v = lookup(tk.v, ctx);
+      out += (v === undefined || v === null) ? '' : String(v);
+    } else if (tk.t === 'tag') {
+      const parts = tk.v.split(/\s+/), kw = parts[0];
+      if (kw === 'for') {                       // {% for u in users %}
+        const item = parts[1], list = lookup(parts[3], ctx) || [];
+        let j = i + 1, depth = 1;
+        while (depth > 0) {                     // find matching endfor
+          const w = toks[j].v || '';
+          if (toks[j].t === 'tag' && w.startsWith('for')) depth++;
+          if (toks[j].t === 'tag' && w === 'endfor') depth--;
+          j++;
+        }
+        const body = toks.slice(i + 1, j - 1);
+        for (const el of list) out += render(body, Object.assign({}, ctx, { [item]: el }));
+        i = j - 1;
+      } else if (kw === 'if') {                 // {% if x %}...{% endif %}
+        const cond = lookup(parts.slice(1).join(' '), ctx);
+        let j = i + 1, depth = 1;
+        while (depth > 0) {
+          const w = toks[j].v || '';
+          if (toks[j].t === 'tag' && w.startsWith('if')) depth++;
+          if (toks[j].t === 'tag' && w === 'endif') depth--;
+          j++;
+        }
+        if (cond) out += render(toks.slice(i + 1, j - 1), ctx);
+        i = j - 1;
+      }
+    }
+  }
+  return out;
+}
+
+/* ============ UI ============ */
+const $ = id => document.getElementById(id);
+const presets = {
+  'profile card': {
+    tpl: '<h2>{{ user.name }}</h2>\n<p>{{ user.bio }}</p>\n<div>\n{% for s in user.skills %}<span class="badge">{{ s }}</span>{% endfor %}\n</div>\n{% if user.hireable %}<p><b>✅ Open to work!</b></p>{% endif %}',
+    data: '{\n  "user": {\n    "name": "Ada Lovelace",\n    "bio": "First programmer. Writes templates now.",\n    "skills": ["math", "engines", "debugging"],\n    "hireable": true\n  }\n}'
+  },
+  'blog list': {
+    tpl: '<h2>Latest posts</h2>\n<ul>\n{% for p in posts %}\n  <li><b>{{ p.title }}</b> — {{ p.date }}{% if p.hot %} 🔥{% endif %}</li>\n{% endfor %}\n</ul>',
+    data: '{\n  "posts": [\n    {"title": "I built a CPU", "date": "Sep 20", "hot": true},\n    {"title": "B-trees explained", "date": "Sep 18", "hot": false},\n    {"title": "Hello, templates", "date": "Sep 12", "hot": true}\n  ]\n}'
+  },
+  'email': {
+    tpl: '<h2>Hi {{ name }}!</h2>\n<p>Your order <b>#{{ order.id }}</b> is {{ order.status }}.</p>\n{% if order.items %}<ul>\n{% for i in order.items %}<li>{{ i }}</li>{% endfor %}\n</ul>{% endif %}\n<p>Thanks for shopping with us.</p>',
+    data: '{\n  "name": "Grace",\n  "order": {"id": 4242, "status": "shipped", "items": ["keyboard", "mouse", "courage"]}\n}'
+  }
+};
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function update() {
+  const tpl = $('tpl').value;
+  let data = {};
+  try { data = JSON.parse($('data').value); }
+  catch (e) { $('out').innerHTML = '<span style="color:#c00">JSON error: ' + esc(e.message) + '</span>'; return; }
+  const toks = lex(tpl);
+  $('tok').innerHTML = toks.map(t => {
+    const short = t.v.length > 42 ? t.v.slice(0, 42) + '…' : t.v;
+    if (t.t === 'text') return '<span class="t-txt">TEXT ' + esc(JSON.stringify(short)) + '</span>';
+    if (t.t === 'var') return '<span class="t-var">VAR ' + esc(short) + '</span>';
+    return '<span class="t-tag">TAG ' + esc(short) + '</span>';
+  }).join(' ');
+  try { $('out').innerHTML = render(toks, data); }
+  catch (e) { $('out').innerHTML = '<span style="color:#c00">Render error: ' + esc(e.message) + '</span>'; }
+}
+const chipBox = $('chips');
+Object.keys(presets).forEach(k => {
+  const c = document.createElement('span');
+  c.className = 'chip'; c.textContent = k;
+  c.onclick = () => { $('tpl').value = presets[k].tpl; $('data').value = presets[k].data; update(); };
+  chipBox.appendChild(c);
+});
+$('tpl').value = presets['profile card'].tpl;
+$('data').value = presets['profile card'].data;
+$('tpl').addEventListener('input', update);
+$('data').addEventListener('input', update);
+update();
+</script>
+</body>
+</html>
