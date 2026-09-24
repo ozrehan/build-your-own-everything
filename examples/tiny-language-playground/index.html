@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TinyLang Playground — Build Your Own Programming Language</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0b0e1a; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#7df9ff; letter-spacing:3px; font-size:clamp(22px,5vw,34px); text-shadow:0 0 18px #00e5ff; }
+  .sub { color:#8b98b8; margin:6px 0 18px; font-size:14px; text-align:center; max-width:640px; }
+  .wrap { width:100%; max-width:760px; display:flex; flex-direction:column; gap:12px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { background:#141a33; border:1px solid #2b3a6b; color:#9fd8ff; border-radius:20px;
+    padding:6px 14px; font-size:13px; cursor:pointer; font-family:monospace; }
+  .chip:hover { border-color:#00e5ff; color:#7df9ff; }
+  #src { width:100%; min-height:110px; background:#070a16; color:#e8f4ff; border:1px solid #2b3a6b;
+    border-radius:10px; padding:14px; font-family:Consolas,monospace; font-size:15px; resize:vertical; }
+  #src:focus { outline:none; border-color:#00e5ff; }
+  button.run { background:linear-gradient(135deg,#00c6ff,#0072ff); border:none; color:#fff;
+    font-size:16px; letter-spacing:2px; padding:12px; border-radius:10px; cursor:pointer; font-weight:700; }
+  button.run:hover { filter:brightness(1.15); }
+  .panels { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:640px){ .panels{ grid-template-columns:1fr; } }
+  .panel { background:#0e1330; border:1px solid #232c55; border-radius:10px; padding:12px; min-height:120px; }
+  .panel h3 { font-size:12px; letter-spacing:2px; color:#8b98b8; margin-bottom:8px; }
+  .panel.full { grid-column:1 / -1; }
+  pre { font-family:Consolas,monospace; font-size:13px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+  .tok-num{color:#ffd257}.tok-id{color:#7df9ff}.tok-op{color:#ff8fb0}.tok-par{color:#8b98b8}.tok-kw{color:#b18cff}
+  #out { color:#7dff9e; font-size:16px; }
+  #err { color:#ff6b8a; }
+  .doc { max-width:760px; margin-top:18px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#9fd8ff; background:#141a33; padding:1px 6px; border-radius:4px; font-family:monospace; }
+</style>
+</head>
+<body>
+<h1>TINYLANG PLAYGROUND</h1>
+<p class="sub">A complete interpreter in one file: <b>tokenize → parse → evaluate</b>.
+Type code, hit run, and watch each stage. This is what "build your own language" produces.</p>
+<div class="wrap">
+  <div class="chips" id="chips"></div>
+  <textarea id="src" spellcheck="false">(def fact (n)
+  (if (<= n 1) 1 (* n (fact (- n 1)))))
+(print (fact 6))
+(print (map (fn (x) (* x x)) (list 1 2 3 4)))</textarea>
+  <button class="run" id="runBtn">▶ RUN</button>
+  <div class="panels">
+    <div class="panel"><h3>1 · TOKENS</h3><pre id="tokens"></pre></div>
+    <div class="panel"><h3>2 · AST</h3><pre id="ast"></pre></div>
+    <div class="panel full"><h3>3 · OUTPUT</h3><pre id="out"></pre><pre id="err"></pre></div>
+  </div>
+</div>
+<div class="doc">
+  <b style="color:#dfe6ff">Language cheatsheet:</b>
+  <code>(def name (args) body)</code> define function ·
+  <code>(fn (x) body)</code> lambda ·
+  <code>(if c a b)</code> ·
+  <code>(let ((x 1)) body)</code> ·
+  <code>(list 1 2)</code> <code>(map f xs)</code> <code>(print x)</code> ·
+  arithmetic <code>+ - * /</code>, comparisons <code>&lt; &gt; <= >= =</code>.
+  The whole pipeline — lexer, recursive-descent parser, tree-walking evaluator with
+  lexical scope — is ~150 lines of readable JS below. Open devtools → sources to read it.
+</div>
+
+<script>
+'use strict';
+/* ============ STAGE 1: TOKENIZER (lexer) ============ */
+function tokenize(src) {
+  const toks = [];
+  const re = /\s*(;[^\n]*|\(|\)|-?\d+(?:\.\d+)?|[^\s()";]+)/y;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const t = m[1];
+    if (!t || t.startsWith(';')) continue;
+    if (t === '(' || t === ')') toks.push({ type: 'par', v: t });
+    else if (/^-?\d/.test(t)) toks.push({ type: 'num', v: parseFloat(t) });
+    else toks.push({ type: 'id', v: t });
+  }
+  return toks;
+}
+
+/* ============ STAGE 2: PARSER (recursive descent -> AST) ============ */
+function parse(toks) {
+  let pos = 0;
+  function expr() {
+    const t = toks[pos++];
+    if (!t) throw new Error('unexpected end of input');
+    if (t.type === 'num') return { tag: 'num', v: t.v };
+    if (t.type === 'id') return { tag: 'id', v: t.v };
+    if (t.v === '(') {
+      const items = [];
+      while (toks[pos] && toks[pos].v !== ')') items.push(expr());
+      if (!toks[pos]) throw new Error('missing )');
+      pos++;
+      return { tag: 'call', items };
+    }
+    throw new Error('unexpected ' + t.v);
+  }
+  const prog = [];
+  while (pos < toks.length) prog.push(expr());
+  return prog;
+}
+
+/* ============ STAGE 3: EVALUATOR (tree-walking, lexical scope) ============ */
+function Env(parent) { this.map = Object.create(null); this.parent = parent || null; }
+Env.prototype.get = function (k) {
+  if (k in this.map) return this.map[k];
+  if (this.parent) return this.parent.get(k);
+  throw new Error('undefined: ' + k);
+};
+Env.prototype.set = function (k, v) { this.map[k] = v; };
+
+const output = [];
+function truthy(x) { return x !== false && x !== null && x !== undefined && x !== 0; }
+
+function ev(node, env) {
+  switch (node.tag) {
+    case 'num': return node.v;
+    case 'id': return env.get(node.v);
+    case 'call': {
+      const items = node.items;
+      if (!items.length) throw new Error('empty ()');
+      const head = items[0];
+      // special forms
+      if (head.tag === 'id') {
+        const kw = head.v;
+        if (kw === 'def') { // (def name (args) body)
+          const name = items[1].v, params = items[2].items.map(p => p.v), body = items[3];
+          const fn = makeFn(params, body, env, name); env.set(name, fn); return name;
+        }
+        if (kw === 'fn') {
+          const params = items[1].items.map(p => p.v), body = items[2];
+          return makeFn(params, body, env, 'lambda');
+        }
+        if (kw === 'if') return truthy(ev(items[1], env)) ? ev(items[2], env) : ev(items[3], env);
+        if (kw === 'let') { // (let ((x 1) (y 2)) body)
+          const e2 = new Env(env);
+          for (const b of items[1].items) e2.set(b.items[0].v, ev(b.items[1], env));
+          return ev(items[2], e2);
+        }
+        if (kw === 'print') { const v = ev(items[1], env); output.push(fmt(v)); return v; }
+      }
+      const f = ev(head, env), args = items.slice(1).map(a => ev(a, env));
+      if (typeof f === 'function') return f(args);
+      if (f && f.tag === 'closure') {
+        const e2 = new Env(f.env);
+        f.params.forEach((p, i) => e2.set(p, args[i]));
+        return ev(f.body, e2);
+      }
+      throw new Error('not callable: ' + fmt(f));
+    }
+  }
+}
+function makeFn(params, body, env, name) { return { tag: 'closure', params, body, env, name }; }
+function fmt(v) {
+  if (v && v.tag === 'closure') return '<fn ' + v.name + '>';
+  if (Array.isArray(v)) return '(' + v.map(fmt).join(' ') + ')';
+  return String(v);
+}
+
+function baseEnv() {
+  const e = new Env();
+  const num = (f, n) => (...a) => { if (a[0].length !== n) throw new Error('arity'); return f(...a[0]); };
+  e.set('+', num(a => a.reduce((x, y) => x + y, 0), 2));
+  e.set('*', num(a => a.reduce((x, y) => x * y, 1), 2));
+  e.set('-', num(a => a.length === 1 ? -a[0] : a[0] - a[1]));
+  e.set('/', num(a => a[0] / a[1]));
+  e.set('<',  num(a => a[0] < a[1])); e.set('>', num(a => a[0] > a[1]));
+  e.set('<=', num(a => a[0] <= a[1])); e.set('>=', num(a => a[0] >= a[1]));
+  e.set('=',  num(a => a[0] === a[1]));
+  e.set('list', a => a[0].slice());
+  e.set('map', a => { const [f, xs] = a[0]; return xs.map(x => applyFn(f, [x])); });
+  e.set('not', num(a => !truthy(a[0]), 1));
+  return e;
+}
+function applyFn(f, args) {
+  if (typeof f === 'function') return f(args);
+  const e2 = new Env(f.env);
+  f.params.forEach((p, i) => e2.set(p, args[i]));
+  return ev(f.body, e2);
+}
+
+/* ============ UI: show all three stages ============ */
+const $ = id => document.getElementById(id);
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function run() {
+  const src = $('src').value;
+  $('err').textContent = ''; $('out').textContent = '';
+  try {
+    const toks = tokenize(src);
+    $('tokens').innerHTML = toks.map(t => {
+      const cls = t.type === 'num' ? 'tok-num' : t.type === 'id'
+        ? (/^(def|fn|if|let|print|map|list)$/.test(t.v) ? 'tok-kw' : 'tok-id')
+        : t.v === '(' || t.v === ')' ? 'tok-par' : 'tok-op';
+      return '<span class="' + cls + '">' + esc(String(t.v)) + '</span>';
+    }).join(' ');
+    const ast = parse(toks);
+    $('ast').textContent = JSON.stringify(ast, null, 1)
+      .replace(/"tag": /g, '').replace(/[{}",]/g, '')
+      .replace(/^\s*[\r\n]/gm, '').slice(0, 1200);
+    output.length = 0;
+    const env = baseEnv();
+    let last;
+    for (const node of ast) last = ev(node, env);
+    $('out').textContent = output.join('\n') + (output.length ? '' : '(no output — try (print …))');
+  } catch (e) { $('err').textContent = 'Error: ' + e.message; }
+}
+const examples = {
+  'factorial': '(def fact (n)\n  (if (<= n 1) 1 (* n (fact (- n 1)))))\n(print (fact 6))',
+  'fibonacci': '(def fib (n)\n  (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n(print (map fib (list 1 2 3 4 5 6 7 8)))',
+  'closures': '(def make-adder (x)\n  (fn (y) (+ x y)))\n(def add5 (make-adder 5))\n(print (add5 10))\n(print (add5 100))',
+  'higher-order': '(print (map (fn (x) (* x x))\n     (list 1 2 3 4 5)))',
+};
+const chipBox = $('chips');
+Object.keys(examples).forEach(k => {
+  const c = document.createElement('span');
+  c.className = 'chip'; c.textContent = k;
+  c.onclick = () => { $('src').value = examples[k]; run(); };
+  chipBox.appendChild(c);
+});
+$('runBtn').onclick = run;
+$('src').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run();
+});
+run();
+</script>
+</body>
+</html>
