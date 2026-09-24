@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B-Tree Visualizer — Build Your Own Database Index</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0f1e; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#ffd257; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #ffaa00; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:680px; line-height:1.6; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:12px; }
+  input#key { width:90px; background:#070a16; border:1px solid #2b3a6b; color:#fff; border-radius:8px;
+    padding:10px; font-size:16px; text-align:center; font-family:monospace; }
+  button { background:#1a2347; border:1px solid #2b3a6b; color:#9fd8ff; border-radius:8px;
+    padding:10px 16px; font-size:14px; cursor:pointer; letter-spacing:1px; }
+  button:hover { border-color:#ffd257; color:#ffd257; }
+  button.primary { background:linear-gradient(135deg,#ffaa00,#ff7700); color:#1a1000; font-weight:700; border:none; }
+  #log { width:100%; max-width:760px; background:#070a16; border:1px solid #232c55; border-radius:10px;
+    padding:10px 14px; font-family:Consolas,monospace; font-size:13px; min-height:44px; color:#9fd8ff;
+    margin-bottom:12px; line-height:1.7; }
+  #log .split { color:#ff8fb0; } #log .hit { color:#7dff9e; }
+  canvas { background:#070a16; border:1px solid #232c55; border-radius:12px; max-width:100%; }
+  .doc { max-width:760px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#ffd257; background:#141a33; padding:1px 6px; border-radius:4px; font-family:monospace; }
+  .stats { display:flex; gap:20px; margin-bottom:10px; color:#8b98b8; font-size:13px; font-family:monospace; }
+  .stats b { color:#ffd257; }
+</style>
+</head>
+<body>
+<h1>B-TREE VISUALIZER</h1>
+<p class="sub">The index structure inside every real database (Postgres, MySQL, SQLite).
+Insert keys and watch nodes <b>split</b> — the exact moment a database grows a new level.
+This is what "build your own database" produces.</p>
+<div class="controls">
+  <input id="key" type="number" placeholder="key" value="42">
+  <button class="primary" id="insertBtn">INSERT</button>
+  <button id="searchBtn">SEARCH</button>
+  <button id="randomBtn">+10 RANDOM</button>
+  <button id="resetBtn">RESET</button>
+</div>
+<div class="stats"><span>order <b>m = 4</b> (max 3 keys / node)</span><span>height <b id="height">1</b></span><span>nodes <b id="nodes">1</b></span><span>keys <b id="nkeys">0</b></span></div>
+<div id="log">Ready. Insert some keys — try 10, 20, 5, 6, 12, 30, 7, 17.</div>
+<canvas id="c" width="760" height="420"></canvas>
+<div class="doc">
+  <b style="color:#dfe6ff">What's happening:</b> a B-tree keeps keys sorted across fixed-size
+  nodes. When a node overflows (4th key here), it <b>splits in two</b> and pushes the middle
+  key up to the parent — that split can cascade all the way to the root, growing the tree
+  one level. Search walks down one path: <code>O(log n)</code> disk reads, which is why
+  databases use it. The full implementation is ~120 lines below — open devtools → sources.
+  <br><br><b style="color:#dfe6ff">Try:</b> insert keys 1–20 in order (worst case), then reset and
+  insert them shuffled. Watch how splits keep the tree balanced either way.
+</div>
+
+<script>
+'use strict';
+/* ================= A real B-tree (order m=4), visualised ================= */
+const M = 4;                 // max children per node
+const MAXK = M - 1;          // max keys per node
+let root, highlight = null, flashT = 0;
+
+function Node(leaf) { return { keys: [], kids: [], leaf }; }
+
+function splitChild(parent, i) {
+  const full = parent.kids[i];
+  const right = Node(full.leaf);
+  const mid = full.keys.splice(1, 1)[0];          // middle key moves up
+  right.keys = full.keys.splice(1, MAXK);         // right half
+  if (!full.leaf) right.kids = full.kids.splice(2, M - 1);
+  parent.keys.splice(i, 0, mid);
+  parent.kids.splice(i + 1, 0, right);
+  return mid;
+}
+
+function insertNonFull(n, k, path) {
+  let i = n.keys.length - 1;
+  if (n.leaf) {
+    while (i >= 0 && k < n.keys[i]) i--;
+    n.keys.splice(i + 1, 0, k);
+    path.push({ node: n, key: k });
+  } else {
+    while (i >= 0 && k < n.keys[i]) i--;
+    i++;
+    if (n.kids[i].keys.length === MAXK) {
+      const mid = splitChild(n, i);
+      log(`<span class="split">✂ SPLIT:</span> node full → middle key <b>${mid}</b> pushed up`);
+      highlight = n.kids[i + 1]; flashT = 1;
+      if (k > mid) i++;
+    }
+    insertNonFull(n.kids[i], k, path);
+  }
+}
+
+function insert(k) {
+  const path = [];
+  if (root.keys.length === MAXK) {
+    const nr = Node(false); nr.kids = [root]; root = nr;
+    const mid = splitChild(nr, 0);
+    log(`<span class="split">✂ ROOT SPLIT:</span> tree grew a level — <b>${mid}</b> is the new root key`);
+    highlight = nr; flashT = 1;
+  }
+  insertNonFull(root, k, path);
+  return path;
+}
+
+function search(n, k, path) {
+  path.push(n);
+  let i = 0;
+  while (i < n.keys.length && k > n.keys[i]) i++;
+  if (i < n.keys.length && k === n.keys[i]) return { node: n, idx: i };
+  if (n.leaf) return null;
+  return search(n.kids[i], k, path);
+}
+
+/* ================= Rendering ================= */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+function layout() {
+  // assign x positions by inorder leaf order
+  let x = 0; const pos = new Map();
+  (function walk(n, d) {
+    n._d = d;
+    if (n.leaf) { pos.set(n, x += 90); }
+    else { n.kids.forEach(k => walk(k, d + 1)); pos.set(n, (pos.get(n.kids[0]) + pos.get(n.kids[n.kids.length - 1])) / 2); }
+  })(root, 0);
+  return pos;
+}
+function stats() {
+  let nn = 0, nk = 0, h = 0;
+  (function w(n, d) { nn++; nk += n.keys.length; h = Math.max(h, d); n.kids.forEach(k => w(k, d + 1)); })(root, 1);
+  document.getElementById('height').textContent = h;
+  document.getElementById('nodes').textContent = nn;
+  document.getElementById('nkeys').textContent = nk;
+}
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const pos = layout(), yOf = d => 50 + d * 95;
+  let maxX = 760;
+  pos.forEach(x => { if (x > maxX) maxX = x; });
+  const sc = Math.min(1, 740 / maxX);
+  ctx.save();
+  ctx.translate((cv.width - cv.width * sc) / 2, 0);
+  ctx.scale(sc, sc);
+  // edges
+  (function edges(n) {
+    const x1 = pos.get(n), y1 = yOf(n._d);
+    n.kids.forEach(k => {
+      const x2 = pos.get(k), y2 = yOf(k._d);
+      ctx.strokeStyle = '#2b3a6b'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x1, y1 + 20); ctx.lineTo(x2, y2 - 20); ctx.stroke();
+      edges(k);
+    });
+  })(root);
+  // nodes
+  (function nodes(n) {
+    const x = pos.get(n), y = yOf(n._d), w = 26 + n.keys.length * 34, h = 40;
+    const isHl = highlight === n && flashT > 0;
+    ctx.fillStyle = isHl ? '#3a2b1a' : (n.leaf ? '#0e1a33' : '#141a33');
+    ctx.strokeStyle = isHl ? '#ff8fb0' : (n.leaf ? '#00e5ff' : '#b18cff');
+    ctx.lineWidth = isHl ? 3 : 2;
+    ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = isHl ? 18 : 8;
+    roundRect(x - w / 2, y - 20, w, h, 8); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Consolas,monospace'; ctx.textAlign = 'center';
+    n.keys.forEach((k, i) => ctx.fillText(k, x - (n.keys.length - 1) * 17 + i * 34, y + 5));
+    n.kids.forEach(nodes);
+  })(root);
+  ctx.restore();
+  if (flashT > 0) flashT -= 0.03;
+  requestAnimationFrame(draw);
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+/* ================= UI ================= */
+const logEl = document.getElementById('log');
+function log(html) { logEl.innerHTML = html; }
+function reset() { root = Node(true); highlight = null; log('Ready. Insert some keys.'); stats(); }
+
+document.getElementById('insertBtn').onclick = () => {
+  const v = parseInt(document.getElementById('key').value, 10);
+  if (isNaN(v)) return;
+  const before = logEl.innerHTML;
+  insert(v);
+  if (!/SPLIT/.test(logEl.innerHTML)) log(`Inserted <b>${v}</b> — fit in existing node, no split.`);
+  document.getElementById('key').value = '';
+  document.getElementById('key').focus();
+  stats();
+};
+document.getElementById('key').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('insertBtn').click();
+});
+document.getElementById('searchBtn').onclick = () => {
+  const v = parseInt(document.getElementById('key').value, 10);
+  if (isNaN(v)) return;
+  const path = [];
+  const r = search(root, v, path);
+  if (r) { highlight = r.node; flashT = 1; log(`<span class="hit">✓ FOUND ${v}</span> — walked ${path.length} level(s) down. That's O(log n).`); }
+  else log(`<span style="color:#ff6b8a">✗ ${v} not present</span> — walked ${path.length} level(s) to a dead end.`);
+};
+document.getElementById('randomBtn').onclick = () => {
+  for (let i = 0; i < 10; i++) insert(Math.floor(Math.random() * 100));
+  log('Inserted 10 random keys — watch the splits cascade.');
+  stats();
+};
+document.getElementById('resetBtn').onclick = reset;
+reset(); draw();
+[10, 20, 5, 6, 12, 30, 7, 17].forEach(insert); stats();
+log('Pre-loaded 8 keys. Insert more — or hit +10 RANDOM — and watch nodes split.');
+</script>
+</body>
+</html>
