@@ -77,16 +77,25 @@ Beyond the full code guides above, [`topics/`](topics/) holds **200 bite-sized l
 
 ## Examples
 
-Real, runnable example projects — one per category over time — so you can see
+Real, runnable example projects — one per category — so you can see
 (and play with) what "build your own X" actually produces before you start.
 
 | Example | Category | Live demo |
 |---|---|---|
-| [Neon Drift — 2D Game Engine](examples/2d-game-engine/) | Games & Graphics | [▶ Play it](https://byoe-2d-game-engine.netlify.app) |
+| [TinyLang Playground](examples/tiny-language-playground/) — tokenizer → parser → evaluator, all visible | Programming Languages | [▶ Try it](https://byoe-tiny-lang.netlify.app) |
+| [B-Tree Visualizer](examples/b-tree-visualizer/) — watch database indexes split | Databases | [▶ Try it](https://byoe-btree.netlify.app) |
+| [Journey of a URL](examples/url-journey/) — DNS → TCP → TLS → HTTP, animated | Networking | [▶ Try it](https://byoe-net-journey.netlify.app) |
+| [TINY-8 CPU](examples/tiny-8-cpu/) — a working 8-bit CPU you program in assembly | Operating Systems | ⏳ deploying |
+| [Template Engine Playground](examples/template-engine-playground/) — compile & render live | Web Development | ⏳ deploying |
+| [Pipeline Runner](examples/pipeline-runner/) — a miniature CI system | DevOps & Infrastructure | ⏳ deploying |
+| [Crypto Playground](examples/crypto-playground/) — hashing, ciphers, brute-force | Security | ⏳ deploying |
+| [Neural Net Playground](examples/neural-playground/) — backprop you can watch learn | AI & Machine Learning | ⏳ deploying |
+| [Neon Drift](examples/2d-game-engine/) — a complete 2D game engine in one file | Games & Graphics | [▶ Play it](https://byoe-2d-game-engine.netlify.app) |
+| [Raft Visualizer](examples/raft-visualizer/) — kill the leader, watch recovery | Distributed Systems & Data | ⏳ deploying |
 
 Each example ships as a commented, dependency-free project in [`examples/`](examples/)
-mapped to its [learning path](topics/2d-game-engine/) — read the path for the theory,
-read the code to see every concept running.
+mapped to its learning path — read the path for the theory, run the code to see
+every concept working.
 
 ---
 
