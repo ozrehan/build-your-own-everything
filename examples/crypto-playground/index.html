@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Playground — Build Your Own Security Tools</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0e0a12; color:#e8dff5; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#ff8fb0; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #ff2d78; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:700px; line-height:1.6; }
+  .tabs { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; justify-content:center; }
+  .tab { background:#1c1420; border:1px solid #3d2a44; color:#c9a8d8; border-radius:20px;
+    padding:9px 22px; font-size:14px; cursor:pointer; letter-spacing:1px; }
+  .tab.active { background:linear-gradient(135deg,#ff2d78,#a02050); color:#fff; border:none; font-weight:700; }
+  .panel { display:none; width:100%; max-width:720px; background:#141020; border:1px solid #2c2347;
+    border-radius:12px; padding:18px; }
+  .panel.active { display:block; }
+  .panel h3 { font-size:12px; letter-spacing:2px; color:#8b98b8; margin:12px 0 6px; }
+  .panel h3:first-child { margin-top:0; }
+  input, textarea { width:100%; background:#080611; border:1px solid #3d2a44; color:#fff; border-radius:8px;
+    padding:11px 12px; font-size:15px; font-family:Consolas,monospace; }
+  input:focus, textarea:focus { outline:none; border-color:#ff8fb0; }
+  textarea { min-height:90px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:560px){ .row{ grid-template-columns:1fr; } }
+  button.go { margin-top:12px; width:100%; background:linear-gradient(135deg,#ff2d78,#a02050); border:none;
+    color:#fff; font-weight:700; border-radius:8px; padding:12px; font-size:14px; letter-spacing:2px; cursor:pointer; }
+  button.go:hover { filter:brightness(1.15); }
+  .out { margin-top:12px; background:#080611; border-radius:8px; padding:12px; font-family:Consolas,monospace;
+    font-size:13px; line-height:1.7; word-break:break-all; min-height:50px; }
+  .out .k { color:#8b98b8; } .out .v { color:#7dff9e; } .out .warn { color:#ffd257; }
+  .doc { max-width:720px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#ffabC3; background:#221626; padding:1px 6px; border-radius:4px; font-family:monospace; }
+  #crackbar { height:8px; background:#080611; border-radius:4px; margin-top:8px; overflow:hidden; }
+  #crackfill { height:100%; width:0; background:linear-gradient(90deg,#ff2d78,#ffd257); transition:width .1s; }
+</style>
+</head>
+<body>
+<h1>CRYPTO PLAYGROUND</h1>
+<p class="sub">The primitives inside every login system and secret message:
+<b>hashing with salt</b>, <b>classical ciphers</b>, and <b>brute-force cracking</b> —
+all running locally in your browser. This is what "build your own security tools" teaches.</p>
+<div class="tabs">
+  <div class="tab active" data-p="p-hash">🔐 PASSWORD HASHING</div>
+  <div class="tab" data-p="p-cipher">✉️ CIPHERS</div>
+  <div class="tab" data-p="p-crack">💥 CRACK IT</div>
+</div>
+
+<div class="panel active" id="p-hash">
+  <h3>PASSWORD</h3>
+  <input id="pw" value="hunter2" autocomplete="off">
+  <h3>SALT (random per user — change it, watch the hash change)</h3>
+  <div class="row">
+    <input id="salt" value="a3f9c1">
+    <button class="go" id="newSalt" style="margin-top:0">🎲 NEW SALT</button>
+  </div>
+  <button class="go" id="hashBtn">HASH WITH SHA-256</button>
+  <div class="out" id="hashOut">Press the button.</div>
+</div>
+
+<div class="panel" id="p-cipher">
+  <h3>MESSAGE</h3>
+  <textarea id="plain">meet me at midnight</textarea>
+  <div class="row">
+    <div><h3>CIPHER</h3>
+      <input id="ckind" list="ckinds" value="caesar">
+      <datalist id="ckinds"><option value="caesar"><option value="vigenere"></datalist>
+    </div>
+    <div><h3>KEY (shift number / keyword)</h3><input id="ckey" value="3"></div>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button class="go" id="encBtn">ENCRYPT →</button>
+    <button class="go" id="decBtn" style="background:linear-gradient(135deg,#7d5cff,#3d2a99)">← DECRYPT</button>
+  </div>
+  <div class="out" id="cipherOut">…</div>
+</div>
+
+<div class="panel" id="p-crack">
+  <h3>CAESAR-CRACK CHALLENGE</h3>
+  <p style="color:#8b98b8;font-size:13px;line-height:1.6;margin-bottom:8px">
+    A secret message was encrypted with an unknown Caesar shift (1–25).
+    Brute-force all 25 shifts and spot the English one — exactly how real
+    cryptanalysis starts (just with much bigger key spaces).</p>
+  <div class="out" id="secretOut" style="color:#ffd257"></div>
+  <button class="go" id="crackBtn">💥 BRUTE-FORCE ALL 25 SHIFTS</button>
+  <div id="crackbar"><div id="crackfill"></div></div>
+  <div class="out" id="crackOut" style="max-height:220px;overflow-y:auto"></div>
+</div>
+
+<div class="doc">
+  <b style="color:#e8dff5">Why this matters:</b> password hashing is why a database leak
+  doesn't reveal passwords — the <b>salt</b> defeats rainbow tables, and the one-way hash
+  means the server never stores your secret. Classical ciphers show the two core ideas of all
+  encryption: <b>confusion</b> (substitution) and the <b>key space</b> (why Caesar falls to
+  brute force but AES-256 doesn't — 25 keys vs 2²⁵⁶). All crypto here runs on
+  <code>SubtleCrypto</code> and ~60 lines of JS below — open devtools → sources.
+</div>
+
+<script>
+'use strict';
+/* ============ Hashing (SHA-256 via SubtleCrypto) ============ */
+const $ = id => document.getElementById(id);
+const enc = new TextEncoder();
+async function sha256hex(s) {
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(s));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+$('newSalt').onclick = () => {
+  $('salt').value = [...crypto.getRandomValues(new Uint8Array(3))]
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  $('hashBtn').click();
+};
+$('hashBtn').onclick = async () => {
+  const pw = $('pw').value, salt = $('salt').value;
+  const h1 = await sha256hex(pw);            // unsalted — rainbow-table bait
+  const h2 = await sha256hex(salt + pw);     // salted — what servers store
+  $('hashOut').innerHTML =
+    '<span class="k">unsalted sha256(password):</span><br><span class="v">' + h1 + '</span><br><br>' +
+    '<span class="k">salted sha256(salt + password):</span><br><span class="v">' + h2 + '</span><br><br>' +
+    '<span class="warn">⚠ Same password, totally different hash. Attackers precompute hashes ' +
+    'of common passwords (rainbow tables) — the salt makes every user\'s hash unique, ' +
+    'so precomputation is worthless. Real systems use bcrypt/argon2 (slow on purpose).</span>';
+};
+
+/* ============ Classical ciphers ============ */
+function caesar(text, shift, decrypt) {
+  const s = ((shift % 26) + 26) % 26 * (decrypt ? -1 : 1);
+  return text.replace(/[a-z]/gi, c => {
+    const base = c <= 'Z' ? 65 : 97;
+    return String.fromCharCode((c.charCodeAt(0) - base + s + 26) % 26 + base);
+  });
+}
+function vigenere(text, key, decrypt) {
+  const k = key.toLowerCase().replace(/[^a-z]/g, '');
+  if (!k) return text;
+  let i = 0;
+  return text.replace(/[a-z]/gi, c => {
+    const base = c <= 'Z' ? 65 : 97;
+    const shift = (k.charCodeAt(i++ % k.length) - 97) * (decrypt ? -1 : 1);
+    return String.fromCharCode((c.charCodeAt(0) - base + shift + 260) % 26 + base);
+  });
+}
+function doCipher(decrypt) {
+  const kind = $('ckind').value.trim().toLowerCase();
+  const key = $('ckey').value, text = $('plain').value;
+  let out;
+  if (kind === 'vigenere') out = vigenere(text, key || 'key', decrypt);
+  else out = caesar(text, parseInt(key, 10) || 0, decrypt);
+  $('cipherOut').innerHTML = '<span class="k">' + (decrypt ? 'decrypted' : 'encrypted') +
+    ' (' + kind + '):</span><br><span class="v">' + esc(out) + '</span>';
+}
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+$('encBtn').onclick = () => doCipher(false);
+$('decBtn').onclick = () => doCipher(true);
+
+/* ============ Brute-force cracker ============ */
+const secrets = [
+  { plain: 'the eagle has landed', hint: 'a famous phrase' },
+  { plain: 'attack at dawn', hint: 'a classic' },
+  { plain: 'never gonna give you up', hint: 'you know this one' },
+];
+let secretShift = 0;
+function newSecret() {
+  const s = secrets[Math.floor(Math.random() * secrets.length)];
+  secretShift = 1 + Math.floor(Math.random() * 25);
+  const cipher = caesar(s.plain, secretShift, false);
+  $('secretOut').innerHTML = '<span class="k">intercepted ciphertext (' + s.hint + '):</span><br>' + esc(cipher);
+  $('crackOut').innerHTML = '';
+  $('crackfill').style.width = '0';
+}
+$('crackBtn').onclick = async () => {
+  const cipher = $('secretOut').textContent.split('\n').pop() || '';
+  $('crackBtn').disabled = true;
+  $('crackOut').innerHTML = '';
+  for (let shift = 1; shift <= 25; shift++) {
+    await new Promise(r => setTimeout(r, 90));
+    const guess = caesar(cipher, shift, true);
+    const isHit = shift === ((26 - secretShift) % 26);
+    const div = document.createElement('div');
+    div.innerHTML = '<span class="k">shift ' + String(shift).padStart(2, '0') + ':</span> ' +
+      (isHit ? '<span class="v"><b>' + esc(guess) + ' ← ENGLISH! ✓</b></span>' : esc(guess));
+    $('crackOut').appendChild(div);
+    $('crackfill').style.width = (shift / 25 * 100) + '%';
+    $('crackOut').scrollTop = 1e6;
+  }
+  const again = document.createElement('div');
+  again.innerHTML = '<br><span class="warn">Cracked with 25 tries. AES-256 would need 2²⁵⁶ — ' +
+    'more than atoms in the universe. Key space is everything.</span> ' +
+    '<a href="#" id="newS" style="color:#ff8fb0">↻ new secret</a>';
+  $('crackOut').appendChild(again);
+  $('newS').onclick = e => { e.preventDefault(); newSecret(); };
+  $('crackBtn').disabled = false;
+};
+
+/* tabs */
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    $(t.dataset.p).classList.add('active');
+  };
+});
+newSecret();
+$('hashBtn').click();
+doCipher(false);
+</script>
+</body>
+</html>
