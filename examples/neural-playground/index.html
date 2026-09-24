@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neural Net Playground — Build Your Own ML from Scratch</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0c1a; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#7df9ff; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #00e5ff; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:720px; line-height:1.6; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:12px; align-items:center; }
+  button { background:#1a2347; border:1px solid #2b3a6b; color:#9fd8ff; border-radius:8px;
+    padding:10px 16px; font-size:13px; cursor:pointer; letter-spacing:1px; }
+  button:hover { border-color:#7df9ff; color:#7df9ff; }
+  button.primary { background:linear-gradient(135deg,#00c6ff,#0072ff); color:#fff; font-weight:700; border:none; }
+  button.on { border-color:#7df9ff; color:#7df9ff; box-shadow:0 0 10px #00e5ff55; }
+  .toolbar label { color:#8b98b8; font-size:13px; }
+  canvas { background:#04060f; border:1px solid #232c55; border-radius:12px; max-width:100%; cursor:crosshair; }
+  #stats { display:flex; gap:24px; margin-top:10px; font-family:Consolas,monospace; font-size:14px; color:#8b98b8; }
+  #stats b { color:#7df9ff; }
+  .legend { display:flex; gap:18px; margin-top:8px; font-size:13px; color:#8b98b8; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+  .doc { max-width:720px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#9fd8ff; background:#141a33; padding:1px 6px; border-radius:4px; font-family:monospace; }
+</style>
+</head>
+<body>
+<h1>NEURAL NET PLAYGROUND</h1>
+<p class="sub"><b>Click</b> to add points (blue = class A, orange = class B — toggle the color),
+then hit <b>train</b> and watch a real neural network learn the boundary with backprop.
+This is what "build your own neural net from scratch" produces.</p>
+<div class="toolbar">
+  <button id="colorBtn" class="on" style="border-color:#5aa9ff;color:#5aa9ff">● BLUE</button>
+  <button id="trainBtn" class="primary">▶ TRAIN</button>
+  <button id="stopBtn">⏸ STOP</button>
+  <button id="spiralBtn">🌀 SPIRAL DATA</button>
+  <button id="clearBtn">CLEAR</button>
+  <label>hidden <input type="range" id="hidden" min="2" max="8" value="4" style="vertical-align:middle;width:70px"> <span id="hn">4</span></label>
+  <label>lr <input type="range" id="lr" min="1" max="100" value="30" style="vertical-align:middle;width:70px"></label>
+</div>
+<canvas id="c" width="560" height="420"></canvas>
+<div id="stats"><span>epoch <b id="epoch">0</b></span><span>loss <b id="loss">—</b></span><span>points <b id="npts">0</b></span></div>
+<div class="legend">
+  <span><i style="background:#5aa9ff"></i>class A — click adds</span>
+  <span><i style="background:#ff9f43"></i>class B — toggle color first</span>
+  <span>background = network's prediction</span>
+</div>
+<div class="doc">
+  <b style="color:#dfe6ff">What's happening:</b> a 2→H→1 multilayer perceptron with tanh
+  activations. Each training step: <code>forward</code> (weighted sums + tanh) →
+  <code>loss</code> (binary cross-entropy) → <code>backward</code> (chain rule gives every
+  weight its gradient) → <code>update</code> (gradient descent). No libraries — the whole
+  network is ~70 lines of plain JS below. Try the <b>spiral</b>: a straight line can't solve it,
+  but 6 hidden neurons can. That's why depth matters. Open devtools → sources.
+</div>
+
+<script>
+'use strict';
+/* ============ Tiny MLP: forward + backprop, zero dependencies ============ */
+const tanh = x => Math.tanh(x);
+let W1, b1, W2, b2, H = 4;   // 2 -> H -> 1
+function initNet(h) {
+  H = h;
+  const r = () => (Math.random() * 2 - 1) * 0.8;
+  W1 = Array.from({ length: H }, () => [r(), r()]);
+  b1 = Array.from({ length: H }, r);
+  W2 = Array.from({ length: H }, r);
+  b2 = r();
+  epoch = 0;
+}
+function forward(x, y) {
+  const z1 = [], a1 = [];
+  for (let j = 0; j < H; j++) { z1[j] = W1[j][0] * x + W1[j][1] * y + b1[j]; a1[j] = tanh(z1[j]); }
+  let z2 = b2;
+  for (let j = 0; j < H; j++) z2 += W2[j] * a1[j];
+  return { a1, out: 1 / (1 + Math.exp(-z2)) };   // sigmoid
+}
+function trainStep(lr) {
+  // accumulate gradients over all points (batch GD), then update
+  const gW1 = W1.map(() => [0, 0]), gb1 = b1.map(() => 0), gW2 = W2.map(() => 0);
+  let gb2 = 0, loss = 0;
+  for (const p of points) {
+    const x = p.x * 2 - 1, y = 1 - p.y * 2;      // normalize to [-1, 1]
+    const { a1, out } = forward(x, y);
+    const t = p.c;
+    loss += -(t * Math.log(out + 1e-9) + (1 - t) * Math.log(1 - out + 1e-9));
+    const dz2 = out - t;                          // dL/dz2 for BCE+sigmoid
+    for (let j = 0; j < H; j++) gW2[j] += dz2 * a1[j];
+    gb2 += dz2;
+    for (let j = 0; j < H; j++) {
+      const dz1 = dz2 * W2[j] * (1 - a1[j] * a1[j]);  // chain rule through tanh
+      gW1[j][0] += dz1 * x; gW1[j][1] += dz1 * y; gb1[j] += dz1;
+    }
+  }
+  const n = Math.max(1, points.length);
+  for (let j = 0; j < H; j++) {
+    W1[j][0] -= lr * gW1[j][0] / n; W1[j][1] -= lr * gW1[j][1] / n;
+    b1[j] -= lr * gb1[j] / n; W2[j] -= lr * gW2[j] / n;
+  }
+  b2 -= lr * gb2 / n;
+  return loss / n;
+}
+
+/* ============ UI ============ */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+let points = [], curColor = 0, training = false, epoch = 0, heat = null, heatEpoch = -1;
+
+cv.addEventListener('pointerdown', e => {
+  const r = cv.getBoundingClientRect();
+  points.push({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, c: curColor });
+  heatEpoch = -1;
+  draw();
+});
+$('colorBtn').onclick = () => {
+  curColor = 1 - curColor;
+  const b = $('colorBtn');
+  b.textContent = curColor ? '● ORANGE' : '● BLUE';
+  b.style.borderColor = curColor ? '#ff9f43' : '#5aa9ff';
+  b.style.color = curColor ? '#ff9f43' : '#5aa9ff';
+};
+$('trainBtn').onclick = () => { if (points.length >= 2) training = true; };
+$('stopBtn').onclick = () => { training = false; };
+$('clearBtn').onclick = () => { points = []; training = false; heatEpoch = -1; initNet(parseInt($('hidden').value, 10)); draw(); };
+$('hidden').oninput = e => { $('hn').textContent = e.target.value; initNet(parseInt(e.target.value, 10)); heatEpoch = -1; };
+$('spiralBtn').onclick = () => {
+  points = []; training = false;
+  for (let i = 0; i < 60; i++) {
+    const t = i / 60 * Math.PI * 3, r0 = 0.08 + i / 60 * 0.32;
+    for (const c of [0, 1]) {
+      const a = t + c * Math.PI;
+      points.push({ x: 0.5 + Math.cos(a) * r0 * 0.9 + (Math.random() - 0.5) * 0.03,
+                    y: 0.5 + Math.sin(a) * r0 * 1.15 + (Math.random() - 0.5) * 0.03, c });
+    }
+  }
+  initNet(6); $('hidden').value = 6; $('hn').textContent = '6'; heatEpoch = -1;
+  training = true;
+};
+
+function drawHeat() {
+  // render decision boundary to offscreen canvas every few epochs
+  const res = 56, off = document.createElement('canvas');
+  off.width = res; off.height = Math.round(res * cv.height / cv.width);
+  const octx = off.getContext('2d'), img = octx.createImageData(off.width, off.height);
+  for (let py = 0; py < off.height; py++) for (let px = 0; px < off.width; px++) {
+    const { out } = forward(px / off.width * 2 - 1, 1 - py / off.height * 2);
+    const i = (py * off.width + px) * 4;
+    img.data[i] = out > 0.5 ? 90 : 255;      // orange-ish vs blue-ish
+    img.data[i + 1] = out > 0.5 ? 159 : 169;
+    img.data[i + 2] = out > 0.5 ? 67 : 255;
+    img.data[i + 3] = 46;
+  }
+  octx.putImageData(img, 0, 0);
+  heat = off; heatEpoch = epoch;
+}
+function draw() {
+  if (!heat || heatEpoch !== epoch) drawHeat();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(heat, 0, 0, cv.width, cv.height);
+  for (const p of points) {
+    ctx.fillStyle = p.c ? '#ff9f43' : '#5aa9ff';
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+    ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x * cv.width, p.y * cv.height, 6, 0, 7);
+    ctx.fill(); ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  $('epoch').textContent = epoch;
+  $('npts').textContent = points.length;
+}
+
+initNet(4);
+draw();
+setInterval(() => {
+  if (training && points.length >= 2) {
+    const lr = parseInt($('lr').value, 10) / 100;
+    let l = 0;
+    for (let i = 0; i < 8; i++) l = trainStep(lr);   // 8 mini-epochs per tick
+    epoch += 8;
+    $('loss').textContent = l.toFixed(4);
+    draw();
+    if (l < 0.02) training = false;
+  }
+}, 60);
+</script>
+</body>
+</html>
