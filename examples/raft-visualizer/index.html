@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raft Visualizer — Build Your Own Distributed Consensus</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#080b16; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#b18cff; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #8a5cff; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:720px; line-height:1.6; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-bottom:12px; }
+  button { background:#1c1633; border:1px solid #4a3f8f; color:#c9b8ff; border-radius:8px;
+    padding:10px 16px; font-size:13px; cursor:pointer; letter-spacing:1px; }
+  button:hover { border-color:#b18cff; color:#b18cff; }
+  button.danger { border-color:#7a2d44; color:#ff8fb0; }
+  button.danger:hover { border-color:#ff2d78; color:#ff2d78; }
+  button:disabled { opacity:.45; cursor:default; }
+  canvas { background:#04060f; border:1px solid #232c55; border-radius:12px; max-width:100%; }
+  #log { width:100%; max-width:760px; margin-top:12px; background:#04060d; border:1px solid #232c55;
+    border-radius:10px; padding:12px 14px; font-family:Consolas,monospace; font-size:12.5px;
+    line-height:1.8; height:150px; overflow-y:auto; }
+  #log .t { color:#4a5578; margin-right:8px; }
+  #log .lead { color:#ffd257; } #log .ok { color:#7dff9e; } #log .bad { color:#ff6b8a; } #log .inf { color:#7df9ff; }
+  .doc { max-width:760px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#c9b8ff; background:#1c1633; padding:1px 6px; border-radius:4px; font-family:monospace; }
+</style>
+</head>
+<body>
+<h1>RAFT VISUALIZER</h1>
+<p class="sub">The consensus algorithm inside etcd, Consul, and Kubernetes —
+<b>leader election</b> and <b>log replication</b>, animated. Kill the leader mid-write and
+watch the cluster recover without losing data. This is what "build your own distributed system" teaches.</p>
+<div class="toolbar">
+  <button id="writeBtn">✏️ WRITE "x=1"</button>
+  <button id="killBtn" class="danger">☠️ KILL LEADER</button>
+  <button id="healBtn">💚 REVIVE ALL</button>
+  <button id="resetBtn">RESET</button>
+</div>
+<canvas id="c" width="760" height="340"></canvas>
+<div id="log"></div>
+<div class="doc">
+  <b style="color:#dfe6ff">What's happening:</b> 5 nodes start as followers with randomized
+  election timeouts. The first to time out becomes <b>candidate</b>, requests votes, and wins
+  with a <b>majority (3/5)</b> — that's the whole safety trick: two leaders can't both get a
+  majority in the same term. The leader then replicates every write to follower logs and only
+  <b>commits</b> once a majority acks. Kill the leader and a new election fires automatically;
+  uncommitted entries may be lost, committed ones never are. The simulation is ~200 lines below —
+  open devtools → sources. Real Raft adds persistence and snapshots on top of exactly this.
+</div>
+
+<script>
+'use strict';
+/* ================= Raft simulation (leader election + log replication) ================= */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const N = 5;
+let nodes, term, leaderId, msgs, writeCounter, electionInProgress;
+
+function reset() {
+  term = 1; leaderId = null; msgs = []; writeCounter = 0; electionInProgress = false;
+  nodes = [];
+  for (let i = 0; i < N; i++) nodes.push({
+    id: i, state: 'follower', alive: true, log: [], commit: 0,
+    timeout: 2 + Math.random() * 2.5, votedFor: null, votes: 0,
+  });
+  $('log').innerHTML = '';
+  log('cluster booted — 5 followers, term 1. Election timers running…', 'inf');
+}
+function log(html, cls) {
+  const el = document.createElement('div');
+  const t = new Date();
+  el.innerHTML = '<span class="t">' + String(t.getSeconds()).padStart(2, '0') + 's</span>' +
+    '<span class="' + (cls || '') + '">term ' + term + ' · ' + html + '</span>';
+  const box = $('log');
+  box.appendChild(el); box.scrollTop = 1e6;
+}
+function send(from, to, kind, label, color) {
+  msgs.push({ from, to, kind, label, color, t: 0, dur: 0.45 });
+}
+function startElection(c) {
+  term++; electionInProgress = true;
+  c.state = 'candidate'; c.votedFor = c.id; c.votes = 1; c.timeout = 2 + Math.random() * 2.5;
+  log('<span class="lead">node ' + c.id + ' timed out → CANDIDATE, requesting votes</span>', '');
+  for (const n of nodes)
+    if (n.alive && n.id !== c.id) send(c.id, n.id, 'voteReq', 'vote?', '#ffd257');
+}
+function becomeLeader(c) {
+  c.state = 'leader'; leaderId = c.id; electionInProgress = false;
+  log('<b>node ' + c.id + ' WON with ' + c.votes + '/5 votes → LEADER</b>', 'lead');
+  heartbeat();
+}
+function heartbeat() {
+  const l = nodes[leaderId];
+  if (!l || !l.alive || l.state !== 'leader') return;
+  for (const n of nodes)
+    if (n.alive && n.id !== l.id) send(l.id, n.id, 'hb', '♥', '#7dff9e');
+}
+function clientWrite() {
+  const l = nodes[leaderId];
+  if (!l || !l.alive) { log('no leader — writes blocked until election completes', 'bad'); return; }
+  writeCounter++;
+  const entry = { idx: l.log.length + 1, val: 'x=' + writeCounter };
+  l.log.push(entry);
+  l.acks = 0;
+  log('client write <b>"' + entry.val + '"</b> → leader appends to its log', 'inf');
+  for (const n of nodes)
+    if (n.alive && n.id !== l.id) send(l.id, n.id, 'append', entry.val, '#7df9ff');
+}
+function killLeader() {
+  const l = nodes[leaderId];
+  if (!l) { log('no leader to kill', 'bad'); return; }
+  l.alive = false; l.state = 'follower'; leaderId = null;
+  log('<b>☠️ node ' + l.id + ' (leader) killed!</b> followers will notice missed heartbeats…', 'bad');
+}
+
+/* message arrival */
+function deliver(m) {
+  const a = nodes[m.from], b = nodes[m.to];
+  if (!a.alive || !b.alive) return;
+  if (m.kind === 'voteReq') {
+    if (b.votedFor === null || b.votedFor === m.from) {
+      b.votedFor = m.from; b.timeout = 2 + Math.random() * 2.5;
+      send(b.id, a.id, 'voteYes', 'yes ✓', '#7dff9e');
+    }
+  } else if (m.kind === 'voteYes') {
+    if (a.state === 'candidate') {
+      a.votes++;
+      if (a.votes >= 3) becomeLeader(a);
+    }
+  } else if (m.kind === 'hb') {
+    if (b.state !== 'follower' || leaderId === null) { /* ok */ }
+    b.state = 'follower'; b.timeout = 2 + Math.random() * 2.5; b.votedFor = null;
+    if (leaderId === null || nodes[leaderId].id !== a.id) { /* stale */ }
+    if (a.state === 'leader') leaderId = a.id;
+  } else if (m.kind === 'append') {
+    const [k, v] = m.label.split('=');
+    if (!b.log.find(e => e.val === m.label)) b.log.push({ idx: b.log.length + 1, val: m.label });
+    send(b.id, a.id, 'ack', 'ack ✓', '#7dff9e');
+  } else if (m.kind === 'ack') {
+    if (a.state === 'leader') {
+      a.acks = (a.acks || 0) + 1;
+      // commit once majority (leader + 2 acks) has the entry
+      const entryVal = m.ackFor;
+      if (a.acks >= 2) {
+        const e = a.log[a.log.length - 1];
+        if (e && a.commit < e.idx) {
+          a.commit = e.idx;
+          for (const n of nodes) if (n.alive) n.commit = Math.max(n.commit, 0);
+          log('<b>majority replicated "' + e.val + '" → COMMITTED ✓</b> (safe even if leader dies now)', 'ok');
+          a.acks = 0;
+        }
+      }
+    }
+  }
+}
+
+/* tick */
+let lastT = 0;
+function tick(dt) {
+  // election timeouts
+  for (const n of nodes) {
+    if (!n.alive || n.state === 'leader') continue;
+    n.timeout -= dt;
+    if (n.timeout <= 0 && !electionInProgress && leaderId === null) startElection(n);
+    else if (n.timeout <= 0) n.timeout = 2 + Math.random() * 2.5;
+  }
+  // leader heartbeats
+  hbT -= dt;
+  if (hbT <= 0) { heartbeat(); hbT = 0.9; }
+  // messages
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    m.t += dt / m.dur;
+    if (m.t >= 1) { msgs.splice(i, 1); deliver(m); }
+  }
+}
+let hbT = 0;
+
+/* render */
+const PX = i => 110 + i * 135, PY = 130;
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  // links leader -> followers
+  const l = leaderId !== null ? nodes[leaderId] : null;
+  if (l && l.alive) {
+    ctx.strokeStyle = '#2b3a6b'; ctx.lineWidth = 1.5;
+    for (const n of nodes) if (n.id !== l.id && n.alive) {
+      ctx.beginPath(); ctx.moveTo(PX(l.id), PY); ctx.lineTo(PX(n.id), PY); ctx.stroke();
+    }
+  }
+  // messages in flight
+  for (const m of msgs) {
+    const k = Math.min(1, m.t), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    const x = PX(m.from) + (PX(m.to) - PX(m.from)) * e;
+    ctx.fillStyle = m.color; ctx.shadowColor = m.color; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(x, PY - 34, 6, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#dfe6ff'; ctx.font = '10px Consolas,monospace'; ctx.textAlign = 'center';
+    ctx.fillText(m.label, x, PY - 48);
+  }
+  // nodes
+  nodes.forEach((n, i) => {
+    const x = PX(i);
+    const col = !n.alive ? '#3a3a4a' : n.state === 'leader' ? '#ffd257' : n.state === 'candidate' ? '#ff8fb0' : '#7df9ff';
+    ctx.fillStyle = '#0a0e1e';
+    ctx.strokeStyle = col; ctx.lineWidth = n.state === 'leader' ? 3.5 : 2;
+    ctx.shadowColor = col; ctx.shadowBlur = n.alive ? 14 : 0;
+    ctx.beginPath(); ctx.arc(x, PY, 34, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = col; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(n.alive ? n.state.toUpperCase() : 'DEAD', x, PY + 5);
+    ctx.fillStyle = '#8b98b8'; ctx.font = '11px Consolas,monospace';
+    ctx.fillText('node ' + n.id, x, PY + 62);
+    // log entries
+    ctx.font = '10px Consolas,monospace';
+    n.log.slice(-4).forEach((e, j) => {
+      ctx.fillStyle = e.idx <= n.commit || (leaderId !== null && nodes[leaderId].commit >= e.idx) ? '#7dff9e' : '#8b98b8';
+      ctx.fillText((e.idx <= (nodes[leaderId !== null ? leaderId : 0] || { commit: 0 }).commit ? '●' : '○') + ' ' + e.val, x, PY + 80 + j * 14);
+    });
+    if (n.state === 'candidate') {
+      ctx.fillStyle = '#ffd257'; ctx.font = '11px Consolas,monospace';
+      ctx.fillText('votes ' + n.votes + '/5', x, PY - 44);
+    }
+  });
+  ctx.fillStyle = '#8b98b8'; ctx.font = '12px Consolas,monospace'; ctx.textAlign = 'left';
+  ctx.fillText('term ' + term + (leaderId !== null ? ' · leader: node ' + leaderId : ' · no leader'), 16, 24);
+  ctx.fillText('● committed   ○ uncommitted', 16, 322);
+}
+
+function frame(t) {
+  const dt = Math.min(0.1, (t - lastT) / 1000 || 0);
+  lastT = t;
+  tick(dt); draw();
+  requestAnimationFrame(frame);
+}
+
+$('writeBtn').onclick = clientWrite;
+$('killBtn').onclick = killLeader;
+$('healBtn').onclick = () => {
+  nodes.forEach(n => { n.alive = true; if (n.state !== 'leader') { n.state = 'follower'; n.timeout = 2 + Math.random() * 2.5; } });
+  log('all nodes revived — they rejoin as followers', 'ok');
+};
+$('resetBtn').onclick = reset;
+reset();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
