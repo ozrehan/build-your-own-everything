@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Runner — Build Your Own CI System</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0b0e17; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#7df9ff; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #00e5ff; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:700px; line-height:1.6; }
+  .wrap { width:100%; max-width:900px; display:grid; grid-template-columns:300px 1fr; gap:12px; }
+  @media (max-width:760px){ .wrap{ grid-template-columns:1fr; } }
+  .card { background:#0e1322; border:1px solid #232c55; border-radius:12px; padding:14px; }
+  .card h3 { font-size:12px; letter-spacing:2px; color:#8b98b8; margin-bottom:10px; }
+  textarea { width:100%; min-height:300px; background:#070a16; color:#c9f5ff; border:1px solid #232c55;
+    border-radius:8px; padding:12px; font-family:Consolas,monospace; font-size:13px; line-height:1.7; resize:vertical; }
+  textarea:focus { outline:none; border-color:#7df9ff; }
+  .btnrow { display:flex; gap:8px; margin-top:10px; }
+  button { flex:1; background:linear-gradient(135deg,#00c6ff,#0072ff); border:none; color:#fff; font-weight:700;
+    border-radius:8px; padding:12px; font-size:14px; letter-spacing:1px; cursor:pointer; }
+  button:hover { filter:brightness(1.15); }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:#1a2347; border:1px solid #2b3a6b; color:#9fd8ff; }
+  #stages { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+  .stage { background:#070a16; border:1px solid #232c55; border-radius:8px; padding:10px 12px;
+    display:flex; align-items:center; gap:10px; font-size:14px; }
+  .stage .dot { width:12px; height:12px; border-radius:50%; background:#3a4568; flex-shrink:0; }
+  .stage.queued .dot { background:#3a4568; }
+  .stage.running .dot { background:#ffd257; animation:pulse 0.8s infinite; }
+  .stage.passed .dot { background:#7dff9e; box-shadow:0 0 10px #7dff9e; }
+  .stage.failed .dot { background:#ff6b8a; box-shadow:0 0 10px #ff6b8a; }
+  .stage .nm { font-family:Consolas,monospace; }
+  .stage .tm { margin-left:auto; color:#8b98b8; font-size:12px; font-family:monospace; }
+  @keyframes pulse { 50% { opacity:.4; } }
+  #logs { background:#04060d; border:1px solid #232c55; border-radius:8px; min-height:280px; max-height:420px;
+    overflow-y:auto; padding:12px; font-family:Consolas,monospace; font-size:12.5px; line-height:1.7; }
+  #logs .t { color:#4a5578; margin-right:8px; }
+  #logs .ok { color:#7dff9e; } #logs .err { color:#ff6b8a; } #logs .inf { color:#7df9ff; }
+  #logs .cmd { color:#ffd257; }
+  #summary { margin-top:10px; font-size:14px; display:none; }
+  .doc { max-width:900px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#9fd8ff; background:#141a33; padding:1px 6px; border-radius:4px; font-family:monospace; }
+</style>
+</head>
+<body>
+<h1>PIPELINE RUNNER</h1>
+<p class="sub">A miniature CI system in one file: <b>parse → schedule → execute → report</b>.
+Edit the pipeline, hit run, and watch stages stream logs like GitHub Actions.
+This is what "build your own CI runner" produces.</p>
+<div class="wrap">
+  <div class="card">
+    <h3>PIPELINE.YML</h3>
+    <textarea id="yml" spellcheck="false"></textarea>
+    <div class="btnrow">
+      <button id="runBtn">▶ RUN PIPELINE</button>
+      <button class="ghost" id="failBtn" title="load a failing pipeline">FAIL DEMO</button>
+    </div>
+  </div>
+  <div>
+    <div class="card" style="margin-bottom:12px">
+      <h3>STAGES</h3>
+      <div id="stages"></div>
+      <div id="summary"></div>
+    </div>
+    <div class="card">
+      <h3>LIVE LOGS</h3>
+      <div id="logs"></div>
+    </div>
+  </div>
+</div>
+<div class="doc">
+  <b style="color:#dfe6ff">What's happening:</b> the "YAML" is parsed into a stage DAG,
+  stages run <b>sequentially</b> (a real runner would fan independent stages out to workers),
+  each command streams timestamped log lines, and a non-zero exit fails the stage and
+  <b>stops the pipeline</b> — the core semantics of every CI system. Commands containing
+  <code>fail</code>/<code>error</code> simulate failure; everything else is a simulated shell.
+  Real runners add containers, caching, and artifact storage on top of exactly this loop.
+  Implementation ~120 lines below — open devtools → sources.
+</div>
+
+<script>
+'use strict';
+/* ============ Mini CI: parse -> schedule -> execute -> report ============ */
+const $ = id => document.getElementById(id);
+const wait = ms => new Promise(r => setTimeout(r, ms));
+let running = false;
+
+const GOOD = `stages:
+  - name: install
+    run:
+      - npm ci
+      - node --version
+  - name: lint
+    run:
+      - eslint src/
+      - prettier --check .
+  - name: test
+    run:
+      - pytest -q
+      - 142 passed in 3.2s
+  - name: build
+    run:
+      - docker build -t app .
+      - image size 84MB
+  - name: deploy
+    run:
+      - kubectl apply -f k8s/
+      - rollout status deployment/app`;
+
+const BAD = `stages:
+  - name: install
+    run:
+      - npm ci
+  - name: test
+    run:
+      - pytest -q
+      - 3 failed, 139 passed
+      - error: AssertionError in test_payments
+  - name: deploy
+    run:
+      - kubectl apply -f k8s/`;
+
+function parseYml(src) {
+  // tiny parser for our subset: stages -> [{name, run:[...]}]
+  const stages = [];
+  let cur = null;
+  for (const raw of src.split('\n')) {
+    const line = raw.replace(/#.*$/, '');
+    let m = line.match(/^\s*-\s*name:\s*(.+)$/);
+    if (m) { cur = { name: m[1].trim(), run: [] }; stages.push(cur); continue; }
+    m = line.match(/^\s*-\s*(.+)$/);
+    if (m && cur) cur.run.push(m[1].trim());
+  }
+  return stages.filter(s => s.run.length);
+}
+
+function log(html, cls) {
+  const el = document.createElement('div');
+  const t = new Date();
+  const ts = String(t.getMinutes()).padStart(2, '0') + ':' +
+             String(t.getSeconds()).padStart(2, '0') + '.' +
+             String(t.getMilliseconds()).padStart(3, '0');
+  el.innerHTML = '<span class="t">' + ts + '</span><span class="' + (cls || '') + '">' + html + '</span>';
+  const box = $('logs');
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+function renderStages(stages, states) {
+  $('stages').innerHTML = stages.map((s, i) =>
+    `<div class="stage ${states[i].st}"><span class="dot"></span>` +
+    `<span class="nm">${esc(s.name)}</span>` +
+    `<span class="tm">${states[i].ms ? (states[i].ms / 1000).toFixed(1) + 's' : ''}</span></div>`
+  ).join('');
+}
+
+async function runPipeline() {
+  if (running) return;
+  const stages = parseYml($('yml').value);
+  if (!stages.length) { log('no stages found — check the YAML', 'err'); return; }
+  running = true;
+  $('runBtn').disabled = true;
+  $('logs').innerHTML = '';
+  $('summary').style.display = 'none';
+  const states = stages.map(() => ({ st: 'queued', ms: 0 }));
+  renderStages(stages, states);
+  const t0 = Date.now();
+  log('runner <b>byoe-1</b> picked up job — ' + stages.length + ' stages', 'inf');
+
+  let failed = null;
+  for (let i = 0; i < stages.length; i++) {
+    const st = stages[i];
+    states[i].st = 'running'; renderStages(stages, states);
+    log('── stage <b>' + esc(st.name) + '</b> ──', 'inf');
+    const s0 = Date.now();
+    for (const cmd of st.run) {
+      log('$ ' + esc(cmd), 'cmd');
+      await wait(280 + Math.random() * 420);
+      if (/fail|error/i.test(cmd)) {
+        log('✗ exit code 1 — ' + esc(cmd), 'err');
+        states[i].st = 'failed'; states[i].ms = Date.now() - s0;
+        failed = st.name;
+        break;
+      }
+      log('✓ done', 'ok');
+    }
+    if (failed) break;
+    states[i].st = 'passed'; states[i].ms = Date.now() - s0;
+    renderStages(stages, states);
+  }
+  const total = ((Date.now() - t0) / 1000).toFixed(1);
+  const sum = $('summary');
+  sum.style.display = 'block';
+  if (failed) {
+    log('pipeline <b>FAILED</b> at stage "' + esc(failed) + '" — downstream stages skipped', 'err');
+    sum.innerHTML = '❌ <b style="color:#ff6b8a">Pipeline failed</b> <span style="color:#8b98b8">in ' + total + 's — "' + esc(failed) + '" exited non-zero, so deploy never ran. That\'s the whole point of CI.</span>';
+  } else {
+    log('pipeline <b>SUCCEEDED</b> — all ' + stages.length + ' stages green', 'ok');
+    sum.innerHTML = '✅ <b style="color:#7dff9e">Pipeline passed</b> <span style="color:#8b98b8">in ' + total + 's — every stage exited 0.</span>';
+  }
+  renderStages(stages, states);
+  running = false;
+  $('runBtn').disabled = false;
+}
+
+$('yml').value = GOOD;
+$('runBtn').onclick = runPipeline;
+$('failBtn').onclick = () => { $('yml').value = BAD; runPipeline(); };
+</script>
+</body>
+</html>
