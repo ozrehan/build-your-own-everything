@@ -14,6 +14,7 @@ This repository is a hands-on collection for people who want to truly understand
 
 - [Original Guides](#original-guides)
 - [Learning Paths](#learning-paths)
+- [Examples](#examples)
 - [Curated Tutorials](#curated-tutorials)
   - [Databases](#databases)
   - [Web Servers & Networking](#web-servers--networking)
@@ -71,6 +72,21 @@ Beyond the full code guides above, [`topics/`](topics/) holds **200 bite-sized l
 | AI & Machine Learning | 20 | [Neural Net from Scratch](topics/neural-net-from-scratch/), [Transformer from Scratch](topics/transformer-from-scratch/), [RAG Pipeline](topics/rag-pipeline/) |
 | Games & Graphics | 20 | [Ray Tracer](topics/ray-tracer/), [Chess Engine](topics/chess-engine/), [CHIP-8 Emulator](topics/chip8-emulator/) |
 | Distributed Systems & Data | 20 | [Mini MapReduce](topics/mapreduce-mini/), [Kademlia DHT](topics/dht-kademlia/), [CRDT Collaborative Text](topics/crdt-collaborative-text/) |
+
+---
+
+## Examples
+
+Real, runnable example projects — one per category over time — so you can see
+(and play with) what "build your own X" actually produces before you start.
+
+| Example | Category | Live demo |
+|---|---|---|
+| [Neon Drift — 2D Game Engine](examples/2d-game-engine/) | Games & Graphics | [▶ Play it](https://byoe-2d-game-engine.netlify.app) |
+
+Each example ships as a commented, dependency-free project in [`examples/`](examples/)
+mapped to its [learning path](topics/2d-game-engine/) — read the path for the theory,
+read the code to see every concept running.
 
 ---
 
