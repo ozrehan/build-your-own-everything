@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Journey of a URL — Build Your Own Networking Stack</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#070b18; color:#dfe6ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#7dff9e; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #00cc66; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:680px; line-height:1.6; }
+  .bar { display:flex; gap:8px; width:100%; max-width:760px; margin-bottom:12px; }
+  input#url { flex:1; background:#070a16; border:1px solid #2b3a6b; color:#fff; border-radius:10px;
+    padding:12px 14px; font-size:15px; font-family:monospace; }
+  input#url:focus { outline:none; border-color:#7dff9e; }
+  button { background:linear-gradient(135deg,#00cc66,#00994d); border:none; color:#04140a; font-weight:700;
+    border-radius:10px; padding:12px 22px; font-size:15px; cursor:pointer; letter-spacing:1px; }
+  button:hover { filter:brightness(1.15); }
+  button:disabled { opacity:.5; cursor:default; }
+  canvas { background:#04060f; border:1px solid #232c55; border-radius:12px; max-width:100%; }
+  #step { width:100%; max-width:760px; margin-top:12px; background:#0a1024; border:1px solid #232c55;
+    border-radius:10px; padding:14px 16px; min-height:86px; }
+  #step h3 { color:#7dff9e; font-size:14px; letter-spacing:2px; margin-bottom:6px; }
+  #step p { color:#aab6d8; font-size:14px; line-height:1.65; }
+  #step code { color:#7dff9e; background:#04140a; padding:1px 6px; border-radius:4px; font-family:monospace; font-size:13px; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; margin-top:10px; font-size:12px; color:#8b98b8; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+<h1>JOURNEY OF A URL</h1>
+<p class="sub">Type any URL and watch what <i>really</i> happens when you press enter:
+DNS → TCP handshake → TLS handshake → HTTP. This is what "build your own networking stack" teaches.</p>
+<div class="bar">
+  <input id="url" value="https://example.com/cats" spellcheck="false">
+  <button id="go">SEND ▶</button>
+</div>
+<canvas id="c" width="760" height="380"></canvas>
+<div id="step"><h3>READY</h3><p>Hit SEND and watch the packets fly. Each phase below is a layer of the stack you'd rebuild yourself in the networking path.</p></div>
+<div class="legend">
+  <span><i style="background:#7df9ff"></i>you</span>
+  <span><i style="background:#ffd257"></i>DNS</span>
+  <span><i style="background:#b18cff"></i>server</span>
+  <span><i style="background:#7dff9e"></i>packet</span>
+  <span><i style="background:#ff6b8a"></i>encrypted</span>
+</div>
+
+<script>
+'use strict';
+/* ============ Animated packet journey: DNS -> TCP -> TLS -> HTTP ============ */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const stepEl = document.getElementById('step'), goBtn = document.getElementById('go');
+
+const YOU = { x: 90, y: 190, c: '#7df9ff', label: 'YOU' };
+const DNS = { x: 300, y: 90, c: '#ffd257', label: 'DNS' };
+const SRV = { x: 670, y: 190, c: '#b18cff', label: 'SERVER' };
+
+let packets = [];   // {x,y,tx,ty,color,label,done,t}
+let running = false, queue = [];
+
+function pkt(from, to, color, label, dur) {
+  return new Promise(res => {
+    packets.push({ x: from.x, y: from.y, sx: from.x, sy: from.y,
+      tx: to.x, ty: to.y, color, label, t: 0, dur: dur || 0.7, res });
+  });
+}
+function say(title, html) {
+  stepEl.innerHTML = '<h3>' + title + '</h3><p>' + html + '</p>';
+}
+const wait = s => new Promise(r => setTimeout(r, s * 1000));
+
+async function journey(rawUrl) {
+  running = true; goBtn.disabled = true;
+  let host, path;
+  try {
+    const u = new URL(rawUrl.includes('://') ? rawUrl : 'https://' + rawUrl);
+    host = u.host; path = u.pathname + u.search;
+  } catch (e) { say('INVALID URL', 'That URL did not parse. Try <code>https://example.com/cats</code>.'); running = false; goBtn.disabled = false; return; }
+
+  // ---- DNS ----
+  say('1 · DNS — "what\'s the IP?"',
+    `Your machine asks a DNS resolver: <code>${host}</code> → ? The resolver walks ` +
+    `root → TLD → authoritative servers and caches the answer. Everything after this uses the raw IP.`);
+  await pkt(YOU, DNS, '#7dff9e', 'A ' + host); await wait(0.3);
+  await pkt(DNS, YOU, '#7dff9e', '→ 93.184.216.34'); await wait(0.6);
+
+  // ---- TCP 3-way handshake ----
+  say('2 · TCP HANDSHAKE — "can we talk reliably?"',
+    `Three packets open a reliable stream: <code>SYN</code> → <code>SYN-ACK</code> → ` +
+    `<code>ACK</code>. Sequence numbers are synchronised here — the foundation every ` +
+    `byte you send later is built on. (Rebuild this and you understand TCP.)`);
+  await pkt(YOU, SRV, '#7dff9e', 'SYN  seq=1000'); await wait(0.25);
+  await pkt(SRV, YOU, '#7dff9e', 'SYN-ACK  seq=5000 ack=1001'); await wait(0.25);
+  await pkt(YOU, SRV, '#7dff9e', 'ACK  ack=5001'); await wait(0.6);
+
+  // ---- TLS handshake ----
+  say('3 · TLS HANDSHAKE — "prove who you are"',
+    `Inside the TCP stream, an encrypted tunnel is negotiated: <code>ClientHello</code> ` +
+    `(ciphers offered) → server certificate → key exchange → <code>Finished</code>. ` +
+    `From here on, every packet is encrypted — shown in <span style="color:#ff6b8a">red</span>.`);
+  await pkt(YOU, SRV, '#ff6b8a', 'ClientHello'); await wait(0.25);
+  await pkt(SRV, YOU, '#ff6b8a', 'Certificate + ServerHello'); await wait(0.25);
+  await pkt(YOU, SRV, '#ff6b8a', 'KeyExchange'); await wait(0.25);
+  await pkt(SRV, YOU, '#ff6b8a', 'Finished ✓'); await wait(0.6);
+
+  // ---- HTTP ----
+  say('4 · HTTP — "give me the page"',
+    `Finally, the actual request, inside the encrypted tunnel: ` +
+    `<code>GET ${esc(path)} HTTP/1.1</code> → server replies <code>200 OK</code> with the HTML. ` +
+    `The browser then repeats this whole dance for every image, font and script.`);
+  await pkt(YOU, SRV, '#ff6b8a', 'GET ' + (path.length > 18 ? path.slice(0, 18) + '…' : path)); await wait(0.3);
+  await pkt(SRV, YOU, '#ff6b8a', '200 OK  (14 KB HTML)'); await wait(0.8);
+
+  say('DONE ✓',
+    `Four layers, ~10 packets, all before a single pixel rendered. ` +
+    `The <b>networking learning path</b> rebuilds each one: a DNS client, a TCP handshake in ` +
+    `userspace, a TLS record layer, and an HTTP server from raw sockets.`);
+  running = false; goBtn.disabled = false;
+}
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+/* ============ Rendering ============ */
+function node(n, sub) {
+  ctx.fillStyle = n.c; ctx.shadowColor = n.c; ctx.shadowBlur = 16;
+  ctx.beginPath(); ctx.arc(n.x, n.y, 26, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#04060f'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(n.label, n.x, n.y + 4);
+  ctx.fillStyle = '#8b98b8'; ctx.font = '12px sans-serif';
+  ctx.fillText(sub || '', n.x, n.y + 46);
+}
+function draw(dt) {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  // faint internet cloud
+  ctx.strokeStyle = '#1a2347'; ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.ellipse(380, 190, 220 + i * 22, 110 + i * 14, 0, 0, 7);
+    ctx.stroke();
+  }
+  node(YOU, 'browser'); node(DNS, 'resolver'); node(SRV, '93.184.216.34');
+  // packets
+  for (let i = packets.length - 1; i >= 0; i--) {
+    const p = packets[i];
+    p.t += dt / p.dur;
+    const k = Math.min(1, p.t), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    p.x = p.sx + (p.tx - p.sx) * e; p.y = p.sy + (p.ty - p.sy) * e;
+    // trail
+    ctx.strokeStyle = p.color; ctx.globalAlpha = 0.25; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(p.sx, p.sy); ctx.lineTo(p.x, p.y); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#dfe6ff'; ctx.font = '11px Consolas,monospace'; ctx.textAlign = 'center';
+    ctx.fillText(p.label, p.x, p.y - 14);
+    if (p.t >= 1) { packets.splice(i, 1); p.res(); }
+  }
+  requestAnimationFrame(t => draw((t - lastT) / 1000, lastT = t));
+}
+let lastT = 0;
+requestAnimationFrame(t => { lastT = t; draw(0); });
+
+goBtn.onclick = () => { if (!running) { packets = []; journey(document.getElementById('url').value.trim()); } };
+document.getElementById('url').addEventListener('keydown', e => { if (e.key === 'Enter') goBtn.click(); });
+</script>
+</body>
+</html>
