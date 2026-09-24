@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TINY-8 CPU — Build Your Own Operating System (start with the CPU)</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d0a14; color:#e8e2ff; font-family:'Segoe UI',system-ui,sans-serif;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 16px; }
+  h1 { color:#ff9f43; letter-spacing:3px; font-size:clamp(20px,5vw,32px); text-shadow:0 0 18px #ff7700; }
+  .sub { color:#8b98b8; margin:6px 0 16px; font-size:14px; text-align:center; max-width:700px; line-height:1.6; }
+  .wrap { width:100%; max-width:900px; display:grid; grid-template-columns:1fr 300px; gap:12px; }
+  @media (max-width:760px){ .wrap{ grid-template-columns:1fr; } }
+  .card { background:#141021; border:1px solid #2c2347; border-radius:12px; padding:14px; }
+  .card h3 { font-size:12px; letter-spacing:2px; color:#8b98b8; margin-bottom:10px; }
+  #asm { width:100%; min-height:280px; background:#080611; color:#ffe9c9; border:1px solid #2c2347;
+    border-radius:8px; padding:12px; font-family:Consolas,monospace; font-size:14px; line-height:1.7; resize:vertical; }
+  #asm:focus { outline:none; border-color:#ff9f43; }
+  .btnrow { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  button { background:#241a3d; border:1px solid #4a3670; color:#ffcf9e; border-radius:8px;
+    padding:10px 16px; font-size:13px; cursor:pointer; letter-spacing:1px; }
+  button:hover { border-color:#ff9f43; color:#ff9f43; }
+  button.primary { background:linear-gradient(135deg,#ff9f43,#ff5d3b); color:#1c0e00; font-weight:700; border:none; }
+  button:disabled { opacity:.45; cursor:default; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .chip { font-size:12px; background:#1c1430; border:1px solid #4a3670; color:#c9b8ff; border-radius:14px;
+    padding:4px 12px; cursor:pointer; }
+  .chip:hover { border-color:#ff9f43; }
+  .regs { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+  .reg { background:#080611; border:1px solid #2c2347; border-radius:8px; padding:8px; text-align:center; }
+  .reg .n { font-size:11px; color:#8b98b8; letter-spacing:1px; }
+  .reg .v { font-family:Consolas,monospace; font-size:20px; color:#ff9f43; }
+  .reg.pc .v { color:#7dff9e; }
+  #ram { display:grid; grid-template-columns:repeat(8,1fr); gap:4px; font-family:Consolas,monospace; font-size:11px; }
+  .cell { background:#080611; border:1px solid #241d3d; border-radius:5px; padding:5px 2px; text-align:center; color:#6f6590; }
+  .cell .a { color:#4a4468; font-size:9px; display:block; }
+  .cell.hot { border-color:#7dff9e; color:#7dff9e; }
+  .cell.written { border-color:#ff9f43; color:#ffcf9e; }
+  #screen { background:#080611; border:1px solid #2c2347; border-radius:8px; min-height:96px;
+    font-family:Consolas,monospace; font-size:15px; color:#7dff9e; padding:10px; white-space:pre-wrap; }
+  #flags { font-family:Consolas,monospace; font-size:12px; color:#8b98b8; margin-top:8px; }
+  #flags b { color:#ff8fb0; }
+  .doc { max-width:900px; margin-top:14px; color:#8b98b8; font-size:13px; line-height:1.7; }
+  .doc code { color:#ffcf9e; background:#1c1430; padding:1px 6px; border-radius:4px; font-family:monospace; }
+  table.isa { width:100%; border-collapse:collapse; font-size:12px; font-family:Consolas,monospace; margin-top:8px; }
+  table.isa td { padding:4px 6px; border-bottom:1px solid #1c1430; color:#a99fd0; }
+  table.isa td:first-child { color:#ff9f43; white-space:nowrap; }
+</style>
+</head>
+<body>
+<h1>TINY-8 CPU</h1>
+<p class="sub">A complete working 8-bit CPU in one file: <b>fetch → decode → execute</b> cycle,
+4 registers, 32 bytes of RAM, and a tiny assembly language you can program right here.
+Every OS boots on top of exactly this loop.</p>
+<div class="wrap">
+  <div class="card">
+    <h3>ASSEMBLY EDITOR</h3>
+    <div class="chips" id="chips"></div>
+    <textarea id="asm" spellcheck="false"></textarea>
+    <div class="btnrow">
+      <button class="primary" id="runBtn">▶ RUN</button>
+      <button id="stepBtn">STEP</button>
+      <button id="resetBtn">RESET</button>
+      <label style="color:#8b98b8;font-size:13px;align-self:center">speed
+        <input type="range" id="speed" min="1" max="60" value="12" style="vertical-align:middle"></label>
+    </div>
+    <table class="isa">
+      <tr><td>LOAD Rn, v</td><td>Rn = v</td></tr>
+      <tr><td>ADD Rn, Rm / ADD Rn, v</td><td>Rn += …</td></tr>
+      <tr><td>SUB Rn, Rm / SUB Rn, v</td><td>Rn -= …</td></tr>
+      <tr><td>STORE Rn, addr / LOADM Rn, addr</td><td>RAM[addr] ↔ Rn</td></tr>
+      <tr><td>JMP l / JZ l / JNZ l</td><td>jump (l = label)</td></tr>
+      <tr><td>CMP Rn, Rm</td><td>set zero-flag</td></tr>
+      <tr><td>OUT Rn</td><td>print Rn to screen</td></tr>
+      <tr><td>HLT</td><td>halt</td></tr>
+    </table>
+  </div>
+  <div>
+    <div class="card" style="margin-bottom:12px">
+      <h3>REGISTERS</h3>
+      <div class="regs">
+        <div class="reg"><div class="n">R0</div><div class="v" id="r0">0</div></div>
+        <div class="reg"><div class="n">R1</div><div class="v" id="r1">0</div></div>
+        <div class="reg"><div class="n">R2</div><div class="v" id="r2">0</div></div>
+        <div class="reg"><div class="n">R3</div><div class="v" id="r3">0</div></div>
+      </div>
+      <div class="regs" style="grid-template-columns:1fr 1fr">
+        <div class="reg pc"><div class="n">PC</div><div class="v" id="rpc">0</div></div>
+        <div class="reg"><div class="n">CYCLES</div><div class="v" id="cyc" style="font-size:16px">0</div></div>
+      </div>
+      <div id="flags">zero-flag: <b id="zf">0</b> &nbsp; status: <b id="st">ready</b></div>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <h3>RAM · 32 BYTES</h3>
+      <div id="ram"></div>
+    </div>
+    <div class="card">
+      <h3>SCREEN · OUT</h3>
+      <div id="screen"></div>
+    </div>
+  </div>
+</div>
+<div class="doc">
+  <b style="color:#e8e2ff">What's happening:</b> every cycle the CPU does
+  <code>fetch</code> (read instruction at PC) → <code>decode</code> (match opcode) →
+  <code>execute</code> (mutate registers/RAM). That's the loop inside every processor on earth —
+  yours just runs at 12 Hz instead of 5 GHz so you can watch it. The assembler (labels →
+  addresses), the flags register, and memory-mapped <code>OUT</code> are the same ideas an OS
+  kernel builds on. Full implementation ~200 lines below — open devtools → sources.
+</div>
+
+<script>
+'use strict';
+/* ==================== TINY-8: assembler + CPU ==================== */
+const RAM_SIZE = 32;
+let ram, regs, pc, zf, cycles, running, prog, timer, writtenCells;
+
+function assemble(src) {
+  const lines = src.split('\n');
+  const labels = {}, prog = [];
+  // pass 1: labels
+  let addr = 0;
+  for (const ln of lines) {
+    const t = ln.split(';')[0].trim();
+    if (!t) continue;
+    const lm = t.match(/^([A-Za-z_]\w*):$/);
+    if (lm) { labels[lm[1]] = addr; continue; }
+    addr++;
+  }
+  // pass 2: instructions
+  for (const ln of lines) {
+    const t = ln.split(';')[0].trim();
+    if (!t || /^[A-Za-z_]\w*:$/.test(t)) continue;
+    const parts = t.split(/[\s,]+/);
+    const op = parts[0].toUpperCase();
+    const arg = a => {
+      if (/^R[0-3]$/i.test(a)) return { reg: parseInt(a[1], 10) };
+      if (/^[A-Za-z_]\w*$/.test(a)) {
+        if (!(a in labels)) throw new Error('unknown label: ' + a);
+        return { imm: labels[a] };
+      }
+      const v = parseInt(a, 10);
+      if (isNaN(v)) throw new Error('bad operand: ' + a);
+      return { imm: v & 0xFF };
+    };
+    prog.push({ op, args: parts.slice(1).map(arg), src: t });
+  }
+  return prog;
+}
+
+function reset() {
+  ram = new Array(RAM_SIZE).fill(0);
+  regs = [0, 0, 0, 0]; pc = 0; zf = 0; cycles = 0;
+  writtenCells = new Set();
+  document.getElementById('screen').textContent = '';
+  document.getElementById('st').textContent = 'ready';
+  document.getElementById('st').style.color = '';
+  try { prog = assemble(document.getElementById('asm').value); }
+  catch (e) { document.getElementById('st').textContent = 'asm error: ' + e.message;
+    document.getElementById('st').style.color = '#ff6b8a'; prog = []; }
+  render();
+}
+function val(a) { return a.reg !== undefined ? regs[a.reg] : a.imm; }
+
+function step() {
+  if (pc < 0 || pc >= prog.length) { halt('halted'); return; }
+  const ins = prog[pc], { op, args } = ins;
+  const R = i => args[i].reg, V = i => val(args[i]);
+  switch (op) {
+    case 'LOAD': regs[R(0)] = V(1) & 0xFF; pc++; break;
+    case 'ADD': regs[R(0)] = (regs[R(0)] + V(1)) & 0xFF; pc++; break;
+    case 'SUB': regs[R(0)] = (regs[R(0)] - V(1) + 256) & 0xFF; pc++; break;
+    case 'STORE': ram[V(1) % RAM_SIZE] = regs[R(0)]; writtenCells.add(V(1) % RAM_SIZE); pc++; break;
+    case 'LOADM': regs[R(0)] = ram[V(1) % RAM_SIZE]; pc++; break;
+    case 'CMP': zf = (regs[R(0)] === V(1)) ? 1 : 0; pc++; break;
+    case 'JMP': pc = V(0); break;
+    case 'JZ': pc = zf ? V(0) : pc + 1; break;
+    case 'JNZ': pc = !zf ? V(0) : pc + 1; break;
+    case 'OUT': {
+      const s = document.getElementById('screen');
+      s.textContent += regs[R(0)] + ' ';
+      pc++; break;
+    }
+    case 'HLT': halt('halted ✓'); return;
+    default: halt('bad opcode: ' + op); return;
+  }
+  cycles++;
+  if (cycles > 100000) { halt('infinite loop guard'); return; }
+  render();
+}
+function halt(msg) {
+  stop();
+  document.getElementById('st').textContent = msg;
+  document.getElementById('st').style.color = '#7dff9e';
+}
+function run() {
+  reset();
+  if (!prog.length) return;
+  running = true;
+  document.getElementById('st').textContent = 'running…';
+  const speed = parseInt(document.getElementById('speed').value, 10);
+  timer = setInterval(() => { for (let i = 0; i < speed; i++) { if (!running) break; step(); } }, 100);
+  document.getElementById('runBtn').disabled = true;
+}
+function stop() { running = false; clearInterval(timer); document.getElementById('runBtn').disabled = false; }
+
+/* ==================== Rendering ==================== */
+const ramEl = document.getElementById('ram');
+function render() {
+  for (let i = 0; i < 4; i++) document.getElementById('r' + i).textContent = regs[i];
+  document.getElementById('rpc').textContent = pc;
+  document.getElementById('cyc').textContent = cycles;
+  document.getElementById('zf').textContent = zf;
+  ramEl.innerHTML = '';
+  for (let i = 0; i < RAM_SIZE; i++) {
+    const d = document.createElement('div');
+    d.className = 'cell' + (writtenCells.has(i) ? ' written' : '');
+    d.innerHTML = '<span class="a">' + i + '</span>' + ram[i];
+    ramEl.appendChild(d);
+  }
+}
+
+/* ==================== UI ==================== */
+const programs = {
+  'count to 10': '; count 1..10\n  LOAD R0, 1\nloop:\n  OUT R0\n  ADD R0, 1\n  CMP R0, 11\n  JNZ loop\n  HLT',
+  'fibonacci': '; first 8 fibonacci numbers\n  LOAD R0, 0\n  LOAD R1, 1\n  LOAD R2, 0\nloop:\n  OUT R0\n  ADD R2, R0\n  ADD R2, R1\n  LOAD R0, R1\n  LOAD R1, R2\n  LOAD R2, 0\n  ADD R3, 1\n  CMP R3, 8\n  JNZ loop\n  HLT',
+  'ram demo': '; store & load from RAM\n  LOAD R0, 42\n  STORE R0, 10\n  LOAD R0, 0\n  LOADM R0, 10\n  OUT R0\n  HLT',
+};
+const chipBox = document.getElementById('chips');
+Object.keys(programs).forEach(k => {
+  const c = document.createElement('span');
+  c.className = 'chip'; c.textContent = k;
+  c.onclick = () => { stop(); document.getElementById('asm').value = programs[k]; reset(); };
+  chipBox.appendChild(c);
+});
+document.getElementById('asm').value = programs['fibonacci'];
+document.getElementById('runBtn').onclick = run;
+document.getElementById('stepBtn').onclick = () => { stop(); step(); };
+document.getElementById('resetBtn').onclick = () => { stop(); reset(); };
+document.getElementById('speed').oninput = e => { if (running) { stop(); run(); } };
+reset();
+</script>
+</body>
+</html>
