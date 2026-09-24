@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run all guide test suites
+        run: |
+          set -euo pipefail
+          pass=0
+          fail=0
+          failed_suites=""
+          for suite in \
+            guides/git/test_mygit.py \
+            guides/web-server/test_server.py \
+            guides/redis/test_redis.py \
+            guides/shell/test_shell.py \
+            guides/regex-engine/test_regex.py \
+            guides/json-parser/test_json.py \
+            guides/lisp-interpreter/test_lisp.py \
+            guides/blockchain/test_blockchain.py \
+            guides/template-engine/test_template.py \
+            guides/dns-server/test_dns.py \
+            guides/static-site-generator/test_ssg.py \
+            guides/load-balancer/test_lb.py; do
+            echo "=== $suite ==="
+            if timeout 120 python3 "$suite"; then
+              pass=$((pass + 1))
+            else
+              fail=$((fail + 1))
+              failed_suites="$failed_suites $suite"
+            fi
+          done
+          echo "PASS_SUITES=$pass FAIL_SUITES=$fail"
+          if [ "$fail" -ne 0 ]; then
+            echo "Failed suites:$failed_suites"
+            exit 1
+          fi
